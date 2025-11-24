@@ -1,0 +1,384 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>KnitKit Motif Maker</title>
+<style>
+  :root{
+    --grid-size: 6;
+    --cell: 20px;
+    --border: #cfcfcf;
+    --blue: #0f62fe;
+    --bg: #fff;
+    --text: #111;
+  }
+
+  body{
+    font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+    padding: 20px;
+    color: var(--text);
+    background: var(--bg);
+  }
+
+  h3{ margin: 8px 0; font-size: 1rem; }
+
+  /* Toggle pill */
+  #viewToggleContainer{ margin-bottom: 12px; display:flex; align-items:center; gap:10px; }
+  #toggleLabel{
+    display:inline-flex; align-items:center; gap:10px; cursor:pointer; user-select:none;
+  }
+  #toggleText{ font-weight: 600; }
+  #togglePill{
+    width: 52px; height: 26px; border-radius: 999px; background: #ccc; position: relative;
+    transition: background .2s ease;
+  }
+  #toggleHandle{
+    width: 22px; height: 22px; background: white; border-radius: 50%;
+    position:absolute; top:2px; left:2px; transition:left .2s ease;
+    box-shadow: 0 1px 3px rgba(0,0,0,.25);
+  }
+  #togglePill[data-on="true"]{ background: var(--blue); }
+  #togglePill[data-on="true"] #toggleHandle{ left: 28px; }
+
+  /* Main grid */
+  #grid{
+    display:grid;
+    grid-template-columns: repeat(var(--grid-size), var(--cell));
+    grid-template-rows: repeat(var(--grid-size), var(--cell));
+    width: calc(var(--grid-size) * var(--cell));
+    height: calc(var(--grid-size) * var(--cell));
+    margin-bottom: 10px;
+    border: 1px solid var(--border);
+  }
+  .cell{
+    width: var(--cell);
+    height: var(--cell);
+    border: 1px solid var(--border);
+    box-sizing: border-box;
+    cursor: pointer;
+    display:flex; align-items:center; justify-content:center;
+  }
+  .cell svg{ width:100%; height:100%; display:block; }
+
+  #controls, #scaleControls{ margin: 10px 0; display:flex; flex-wrap:wrap; gap:6px; align-items:center; }
+  button{
+    padding: 6px 10px; border-radius: 8px; border:1px solid var(--border); background:#f7f7f7; cursor:pointer;
+  }
+  button:hover{ background:#eee; }
+  .scaleBtn.active{ outline: 2px solid var(--blue); background:#eef3ff; }
+
+  /* Attribute dialog */
+  #attributeDialog{
+    display:none;
+    position: fixed; inset: 0; background: rgba(0,0,0,.35);
+    z-index:1000; align-items:center; justify-content:center;
+  }
+  #attributeCard{
+    background:#fff; border:1px solid #888; padding: 18px; border-radius: 12px; width:min(360px, 90vw);
+  }
+  #attributeCard label{ display:block; margin: 6px 0; }
+  #attributeActions{ margin-top:12px; display:flex; gap:8px; }
+
+  /* Scaled preview */
+  #scaledGridContainer{
+    margin-top: 10px;
+    display: grid;
+    gap: 0;
+    border:1px solid var(--border);
+    width: fit-content;
+  }
+  #scaledGridContainer .cell{
+    border-width: .5px;
+  }
+</style>
+</head>
+<body>
+
+<div id="viewToggleContainer">
+  <label id="toggleLabel" for="viewToggle" aria-label="Toggle stitch vs grid view">
+    <span id="toggleText">Stitch</span>
+    <div id="togglePill" data-on="true" role="switch" aria-checked="true" tabindex="0">
+      <div id="toggleHandle"></div>
+    </div>
+  </label>
+</div>
+
+<div id="grid" aria-label="Motif grid"></div>
+
+<div id="controls">
+  <button id="clearBtn" type="button">Clear</button>
+  <button id="saveBtn" type="button">Save</button>
+  <button id="openBtn" type="button">Open</button>
+  <input type="file" id="fileInput" accept=".json" hidden />
+</div>
+
+<div id="scaleControls">
+  <h3 style="margin-right:6px;">Scale</h3>
+  <button class="scaleBtn active" data-scale="2" type="button">2×</button>
+  <button class="scaleBtn" data-scale="3" type="button">3×</button>
+  <button class="scaleBtn" data-scale="4" type="button">4×</button>
+</div>
+
+<!-- Attribute modal -->
+<div id="attributeDialog" role="dialog" aria-modal="true" aria-labelledby="attrTitle">
+  <div id="attributeCard">
+    <h3 id="attrTitle">Choose attributes</h3>
+    <label><input type="checkbox" value="geometric"> Geometric</label>
+    <label><input type="checkbox" value="floral"> Floral</label>
+    <label><input type="checkbox" value="abstract"> Abstract</label>
+    <label><input type="checkbox" value="modern"> Modern</label>
+
+    <div id="attributeActions">
+      <button id="attrSaveBtn" type="button">Save</button>
+      <button id="attrCancelBtn" type="button">Cancel</button>
+    </div>
+  </div>
+</div>
+
+<div id="scaledGridContainer" aria-label="Scaled preview"></div>
+
+<script>
+class MotifMaker {
+  constructor(opts){
+    this.size = opts.size ?? 6;
+    this.cellPx = opts.cellPx ?? 20;
+
+    this.gridEl = opts.gridEl;
+    this.previewEl = opts.previewEl;
+    this.togglePill = opts.togglePill;
+    this.toggleText = opts.toggleText;
+
+    this.fileInput = opts.fileInput;
+    this.scaleButtons = opts.scaleButtons;
+
+    this.attrDialog = opts.attrDialog;
+    this.attrSaveBtn = opts.attrSaveBtn;
+    this.attrCancelBtn = opts.attrCancelBtn;
+
+    this.chevronView = true;
+    this.scale = 2;
+    this.nameForSave = "";
+
+    this.grid = this.blankGrid();
+    this.cells = []; // DOM refs
+
+    this.buildMainGrid();
+    this.bindEvents();
+    this.renderAll();
+  }
+
+  blankGrid(){
+    return Array.from({length:this.size}, ()=> Array(this.size).fill(0));
+  }
+
+  buildMainGrid(){
+    const frag = document.createDocumentFragment();
+    for(let r=0; r<this.size; r++){
+      for(let c=0; c<this.size; c++){
+        const cell = document.createElement("div");
+        cell.className = "cell";
+        cell.dataset.r = r;
+        cell.dataset.c = c;
+        frag.appendChild(cell);
+        this.cells.push(cell);
+      }
+    }
+    this.gridEl.style.setProperty("--grid-size", this.size);
+    this.gridEl.appendChild(frag);
+  }
+
+  bindEvents(){
+    // Event delegation for main grid
+    this.gridEl.addEventListener("click", (e)=>{
+      const cell = e.target.closest(".cell");
+      if(!cell) return;
+      const r = Number(cell.dataset.r);
+      const c = Number(cell.dataset.c);
+      this.grid[r][c] = this.grid[r][c] ? 0 : 1;
+      this.renderCell(cell, this.grid[r][c]);
+      this.renderPreview();
+    });
+
+    // Toggle pill click + keyboard
+    const toggle = ()=>{
+      this.chevronView = !this.chevronView;
+      this.togglePill.dataset.on = this.chevronView;
+      this.togglePill.setAttribute("aria-checked", String(this.chevronView));
+      this.toggleText.textContent = this.chevronView ? "Stitch" : "Grid";
+      this.renderAll();
+    };
+    this.togglePill.addEventListener("click", toggle);
+    this.togglePill.addEventListener("keydown", (e)=>{
+      if(e.key === "Enter" || e.key === " "){ e.preventDefault(); toggle(); }
+    });
+
+    // Clear
+    document.getElementById("clearBtn").addEventListener("click", ()=>{
+      this.grid = this.blankGrid();
+      this.renderAll();
+    });
+
+    // Open
+    document.getElementById("openBtn").addEventListener("click", ()=> this.fileInput.click());
+    this.fileInput.addEventListener("change", ()=> this.openFile());
+
+    // Save (with attributes)
+    document.getElementById("saveBtn").addEventListener("click", ()=>{
+      const name = prompt("Enter a name for your design:");
+      if(!name) return;
+      this.nameForSave = name.trim();
+      this.openAttrDialog();
+    });
+    this.attrCancelBtn.addEventListener("click", ()=> this.closeAttrDialog());
+    this.attrSaveBtn.addEventListener("click", ()=> this.saveFile());
+
+    // Scale buttons
+    this.scaleButtons.forEach(btn=>{
+      btn.addEventListener("click", ()=>{
+        this.scaleButtons.forEach(b=>b.classList.remove("active"));
+        btn.classList.add("active");
+        this.scale = Number(btn.dataset.scale);
+        this.renderPreview();
+      });
+    });
+  }
+
+  openAttrDialog(){
+    this.attrDialog.style.display = "flex";
+  }
+  closeAttrDialog(){
+    this.attrDialog.style.display = "none";
+    this.attrDialog.querySelectorAll("input[type=checkbox]").forEach(cb=>cb.checked=false);
+  }
+
+  openFile(){
+    const file = this.fileInput.files?.[0];
+    if(!file) return;
+    const reader = new FileReader();
+    reader.onload = (e)=>{
+      try{
+        const data = JSON.parse(e.target.result);
+        if(!data.grid) throw new Error("Missing grid");
+        this.grid = data.grid.map(row=>row.map(v=>v?1:0));
+        this.renderAll();
+        const attrs = data.attributes?.length ? "\nAttributes: " + data.attributes.join(", ") : "";
+        alert((data.name ?? "Loaded motif") + attrs);
+      } catch(err){
+        alert("Invalid file");
+      }
+    };
+    reader.readAsText(file);
+    this.fileInput.value = "";
+  }
+
+  saveFile(){
+    const checked = Array.from(this.attrDialog.querySelectorAll("input[type=checkbox]:checked"))
+      .map(cb=>cb.value);
+
+    const payload = {
+      name: this.nameForSave,
+      grid: this.grid,
+      attributes: checked
+    };
+
+    const blob = new Blob([JSON.stringify(payload, null, 2)], {type:"application/json"});
+    const link = document.createElement("a");
+    link.href = URL.createObjectURL(blob);
+    link.download = `${this.nameForSave || "motif"}.json`;
+    link.click();
+    URL.revokeObjectURL(link.href);
+
+    this.closeAttrDialog();
+  }
+
+  // --- Rendering ---
+  renderAll(){
+    // main grid cells
+    this.cells.forEach(cell=>{
+      const r = Number(cell.dataset.r);
+      const c = Number(cell.dataset.c);
+      this.renderCell(cell, this.grid[r][c]);
+    });
+    this.renderPreview();
+  }
+
+  renderCell(cellEl, filled){
+    cellEl.replaceChildren(this.createCellVisual(filled));
+  }
+
+  createCellVisual(filled){
+    if(!this.chevronView){
+      const div = document.createElement("div");
+      div.style.width = "100%";
+      div.style.height = "100%";
+      div.style.background = filled ? "black" : "white";
+      return div;
+    }
+    const svgNS = "http://www.w3.org/2000/svg";
+    const svg = document.createElementNS(svgNS, "svg");
+    svg.setAttribute("viewBox", "0 0 16 16");
+
+    const bg = document.createElementNS(svgNS, "rect");
+    bg.setAttribute("width", "16");
+    bg.setAttribute("height", "16");
+    bg.setAttribute("fill", "white");
+    svg.appendChild(bg);
+
+    const left = document.createElementNS(svgNS, "path");
+    left.setAttribute("d", "M1 1L7.6 5.5V15L1 10.5V1Z");
+    left.setAttribute("fill", filled ? "black" : "white");
+    svg.appendChild(left);
+
+    const right = document.createElementNS(svgNS, "path");
+    right.setAttribute("d", "M14.8929 1L8.39286 5.5V15L14.8929 10.5V1Z");
+    right.setAttribute("fill", filled ? "black" : "white");
+    svg.appendChild(right);
+
+    return svg;
+  }
+
+  renderPreview(){
+    this.previewEl.replaceChildren();
+
+    const previewSize = this.size * this.scale;
+    this.previewEl.style.gridTemplateColumns = `repeat(${previewSize}, ${this.cellPx}px)`;
+    this.previewEl.style.gridTemplateRows = `repeat(${previewSize}, ${this.cellPx}px)`;
+
+    const frag = document.createDocumentFragment();
+    for(let r=0; r<this.size; r++){
+      for(let c=0; c<this.size; c++){
+        const filled = this.grid[r][c];
+        for(let dr=0; dr<this.scale; dr++){
+          for(let dc=0; dc<this.scale; dc++){
+            const cell = document.createElement("div");
+            cell.className = "cell";
+            cell.style.width = this.cellPx+"px";
+            cell.style.height = this.cellPx+"px";
+            cell.appendChild(this.createCellVisual(filled));
+            frag.appendChild(cell);
+          }
+        }
+      }
+    }
+    this.previewEl.appendChild(frag);
+  }
+}
+
+new MotifMaker({
+  size: 6,
+  cellPx: 20,
+  gridEl: document.getElementById("grid"),
+  previewEl: document.getElementById("scaledGridContainer"),
+  togglePill: document.getElementById("togglePill"),
+  toggleText: document.getElementById("toggleText"),
+  fileInput: document.getElementById("fileInput"),
+  scaleButtons: Array.from(document.querySelectorAll(".scaleBtn")),
+  attrDialog: document.getElementById("attributeDialog"),
+  attrSaveBtn: document.getElementById("attrSaveBtn"),
+  attrCancelBtn: document.getElementById("attrCancelBtn"),
+});
+</script>
+</body>
+</html>

@@ -1,0 +1,436 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>KnitKit Pattern Maker</title>
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<style>
+  :root{
+    --panel-w: 340px;
+    --cell: 10px;
+    --border: #d7d7d7;
+    --bg: #fff;
+    --ink: #111;
+    --muted: #666;
+    --blue: #0f62fe;
+  }
+
+  body{
+    font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
+    padding:20px;
+    background:var(--bg);
+    color:var(--ink);
+    display:flex;
+    flex-direction:column;
+    gap:18px;
+  }
+
+  .row{
+    display:flex;
+    gap:18px;
+    flex-wrap:wrap;
+    align-items:flex-start;
+  }
+
+  .design-col{
+    width:var(--panel-w);
+    min-width:260px;
+    border:1px solid var(--border);
+    border-radius:12px;
+    padding:12px;
+    box-shadow: 0 1px 4px rgba(0,0,0,.04);
+    background:#fafafa;
+  }
+
+  h2{
+    margin:0 0 8px;
+    font-size:15px;
+    letter-spacing:.2px;
+  }
+
+  label.block{
+    display:block;
+    margin-top:8px;
+    font-size:12px;
+    color:var(--muted);
+    font-weight:600;
+  }
+
+  input[type="file"]{ width:100%; }
+  input[type="range"]{ width:100%; }
+  textarea{
+    width:100%;
+    box-sizing:border-box;
+    padding:8px;
+    font-size:14px;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    border-radius:10px;
+    border:1px solid var(--border);
+  }
+
+  canvas{
+    display:block;
+    background:#fff;
+    border:1px solid #bbb;
+    margin-top:8px;
+    image-rendering: pixelated;
+    border-radius:8px;
+  }
+
+  .small{
+    font-size:12px;
+    color:var(--muted);
+    margin-top:6px;
+  }
+
+  #stripeContainer{
+    width:100%;
+    display:flex;
+    flex-direction:column;
+    gap:12px;
+    margin-top:8px;
+  }
+
+  .stripeWrapper{
+    width:100%;
+    overflow-x:auto;
+    border:1px solid var(--border);
+    padding:8px;
+    border-radius:10px;
+    background:#fff;
+  }
+
+  .badge{
+    display:inline-flex; align-items:center; gap:6px;
+    font-size:12px; color:#fff; background:var(--blue);
+    padding:2px 8px; border-radius:999px; font-weight:700;
+  }
+</style>
+</head>
+<body>
+
+<div class="row" id="designRow"></div>
+
+<div>
+  <div style="display:flex; align-items:center; gap:8px; margin-bottom:6px;">
+    <h2 style="margin:0;">Stripe Repeater</h2>
+    <span class="badge">A / B / C</span>
+  </div>
+
+  <label class="block">
+    Pseudocode sequence (one line per stripe) — examples:
+    <code>3(A2B3)</code>, <code>A2B3</code>, <code>2(A)B4C</code>
+    <div class="small">
+      Global repeat goes outside parentheses; A#/B#/C# are token counts.
+    </div>
+  </label>
+
+  <textarea id="pattern" rows="4"></textarea>
+  <div id="stripeContainer"></div>
+</div>
+
+<script>
+class PatternMaker {
+  constructor(opts){
+    this.keys = ["A","B","C"];
+
+    this.designRow = opts.designRow;
+    this.patternInput = opts.patternInput;
+    this.stripeContainer = opts.stripeContainer;
+
+    // state
+    this.designs = {A:null, B:null, C:null}; // each is 2D color grid
+    this.scales  = {A:1, B:1, C:1};
+
+    // DOM refs
+    this.fileInputs = {};
+    this.scaleInputs = {};
+    this.scaleLabels = {};
+    this.previewCanvases = {};
+
+    this.cellPx = 10;          // base pixel size for drawings
+    this.previewScaleClamp = 20;
+
+    this.renderQueued = false;
+
+    this.buildDesignPanels();
+    this.bindEvents();
+    this.renderAll();
+  }
+
+  // ---------- UI BUILD ----------
+  buildDesignPanels(){
+    const frag = document.createDocumentFragment();
+
+    this.keys.forEach(k=>{
+      const col = document.createElement("div");
+      col.className = "design-col";
+      col.innerHTML = `
+        <h2>Design ${k}</h2>
+        <input id="file${k}" type="file" accept=".json" />
+        <canvas id="canvas${k}" width="1" height="1"></canvas>
+
+        <label class="block">Scale
+          <input id="scale${k}" type="range" min="1" max="${this.previewScaleClamp}" value="1">
+          <div class="small"><span id="scale${k}Label">1×</span></div>
+        </label>
+      `;
+      frag.appendChild(col);
+
+      this.fileInputs[k] = col.querySelector(`#file${k}`);
+      this.scaleInputs[k] = col.querySelector(`#scale${k}`);
+      this.scaleLabels[k] = col.querySelector(`#scale${k}Label`);
+      this.previewCanvases[k] = col.querySelector(`#canvas${k}`);
+    });
+
+    this.designRow.appendChild(frag);
+  }
+
+  bindEvents(){
+    // File loading per key
+    this.keys.forEach(k=>{
+      this.fileInputs[k].addEventListener("change", (e)=>{
+        const file = e.target.files?.[0];
+        if(!file) return;
+        this.readJsonFile(file)
+          .then(grid=>{
+            this.designs[k] = grid;
+            this.queueRender();
+          })
+          .catch(err=> alert(err.message));
+      });
+
+      this.scaleInputs[k].addEventListener("input", ()=>{
+        this.scales[k] = parseInt(this.scaleInputs[k].value, 10) || 1;
+        this.queueRender();
+      });
+    });
+
+    // Pattern typing
+    this.patternInput.addEventListener("input", ()=> this.queueRender());
+    this.patternInput.addEventListener("keydown", (e)=>{
+      if(e.key === "Enter") this.queueRender();
+    });
+  }
+
+  queueRender(){
+    if(this.renderQueued) return;
+    this.renderQueued = true;
+    requestAnimationFrame(()=>{
+      this.renderQueued = false;
+      this.renderAll();
+    });
+  }
+
+  // ---------- FILE + GRID HELPERS ----------
+  async readJsonFile(file){
+    const text = await file.text();
+    let parsed;
+    try{ parsed = JSON.parse(text); }
+    catch(e){ throw new Error("Failed to parse JSON."); }
+
+    const rawGrid =
+      (Array.isArray(parsed) && Array.isArray(parsed[0])) ? parsed :
+      (parsed && Array.isArray(parsed.grid)) ? parsed.grid :
+      null;
+
+    if(!rawGrid) throw new Error("Invalid JSON — expected a 2D array or { grid: [...] }.");
+
+    return this.toColorGrid(rawGrid);
+  }
+
+  toColorGrid(grid){
+    return grid.map(row=>row.map(cell=>{
+      if(cell===1||cell==="1"||cell===true) return "black";
+      if(cell===0||cell==="0"||cell===false) return "white";
+      if(typeof cell==="string"){
+        const s=cell.trim().toLowerCase();
+        if(["0","white","#fff","#ffffff"].includes(s)) return "white";
+        if(["1","black","#000","#000000"].includes(s)) return "black";
+      }
+      return "white";
+    }));
+  }
+
+  expandDesign(design, scale){
+    if(!design) return null;
+    if(scale===1) return design;
+
+    const expanded=[];
+    for(const row of design){
+      const newRow = row.flatMap(cell => Array(scale).fill(cell));
+      for(let i=0;i<scale;i++) expanded.push([...newRow]);
+    }
+    return expanded;
+  }
+
+  // ---------- PATTERN PARSING ----------
+  expandTokens(seqText){
+    // A2B3C => ["A","A","B","B","B","C"]
+    const out=[];
+    const cleaned = seqText.replace(/\s+/g,"").toUpperCase();
+    let i=0;
+
+    while(i<cleaned.length){
+      const letter = cleaned[i];
+      if(!this.keys.includes(letter)){ i++; continue; }
+      i++;
+      let numStr="";
+      while(i<cleaned.length && /\d/.test(cleaned[i])){
+        numStr += cleaned[i]; i++;
+      }
+      const count = numStr ? parseInt(numStr,10) : 1;
+      for(let c=0;c<count;c++) out.push(letter);
+    }
+    return out;
+  }
+
+  parsePatternLine(line){
+    line = line.trim();
+    if(!line) return [];
+
+    // Global repeat: 3(A2B3)
+    const m = line.match(/^(\d+)\((.+)\)$/i);
+    if(m){
+      const repeat = parseInt(m[1],10) || 1;
+      const inside = m[2];
+      const tokens = this.expandTokens(inside);
+      return Array.from({length:repeat}, ()=>tokens).flat();
+    }
+    return this.expandTokens(line);
+  }
+
+  // ---------- DRAWING ----------
+  drawGridOnCanvas(grid, canvas){
+    if(!grid || !grid.length || !grid[0].length){
+      canvas.width=1; canvas.height=1; return;
+    }
+    const h = grid.length, w = grid[0].length;
+    const px = this.cellPx;
+
+    canvas.width = w * px;
+    canvas.height = h * px;
+
+    const ctx = canvas.getContext("2d");
+    ctx.clearRect(0,0,canvas.width,canvas.height);
+
+    // fill
+    for(let y=0;y<h;y++){
+      for(let x=0;x<w;x++){
+        ctx.fillStyle = grid[y][x];
+        ctx.fillRect(x*px, y*px, px, px);
+      }
+    }
+
+    // subtle grid
+    ctx.strokeStyle = "#ccc";
+    ctx.lineWidth = 1;
+    for(let x=0;x<=w;x++){
+      const lx = x*px + 0.5;
+      ctx.beginPath(); ctx.moveTo(lx,0); ctx.lineTo(lx,h*px); ctx.stroke();
+    }
+    for(let y=0;y<=h;y++){
+      const ly = y*px + 0.5;
+      ctx.beginPath(); ctx.moveTo(0,ly); ctx.lineTo(w*px,ly); ctx.stroke();
+    }
+  }
+
+  renderStripeLine(seq){
+    const panels = seq
+      .filter(k => this.designs[k])
+      .map(k => this.expandDesign(this.designs[k], this.scales[k]))
+      .filter(Boolean);
+
+    if(!panels.length) return null;
+
+    const maxH = Math.max(...panels.map(g=>g.length));
+    const maxW = Math.max(...panels.map(g=>g[0].length));
+
+    const totalW = panels.length * maxW;
+    const px = this.cellPx;
+
+    const canvas = document.createElement("canvas");
+    canvas.width = totalW * px;
+    canvas.height = maxH * px;
+
+    const ctx = canvas.getContext("2d");
+    ctx.clearRect(0,0,canvas.width,canvas.height);
+
+    let offsetX = 0;
+    for(const grid of panels){
+      const w = grid[0].length;
+      const h = grid.length;
+
+      const padX = Math.floor((maxW - w)/2);
+      const padY = Math.floor((maxH - h)/2);
+
+      // draw filled cells
+      for(let y=0;y<h;y++){
+        for(let x=0;x<w;x++){
+          ctx.fillStyle = grid[y][x];
+          ctx.fillRect((offsetX + padX + x)*px, (padY + y)*px, px, px);
+        }
+      }
+
+      // panel grid lines
+      ctx.strokeStyle="#ccc";
+      ctx.lineWidth=1;
+      for(let x=0;x<=maxW;x++){
+        const lx = (offsetX + x)*px + 0.5;
+        ctx.beginPath(); ctx.moveTo(lx,0); ctx.lineTo(lx,maxH*px); ctx.stroke();
+      }
+      for(let y=0;y<=maxH;y++){
+        const ly = y*px + 0.5;
+        ctx.beginPath(); ctx.moveTo(offsetX*px,ly); ctx.lineTo((offsetX+maxW)*px,ly); ctx.stroke();
+      }
+
+      offsetX += maxW;
+    }
+
+    return canvas;
+  }
+
+  // ---------- TOP-LEVEL RENDER ----------
+  renderPreviews(){
+    this.keys.forEach(k=>{
+      this.scaleLabels[k].textContent = `${this.scales[k]}×`;
+      if(this.designs[k]){
+        const expanded = this.expandDesign(this.designs[k], this.scales[k]);
+        this.drawGridOnCanvas(expanded, this.previewCanvases[k]);
+      } else {
+        this.previewCanvases[k].width = 1;
+        this.previewCanvases[k].height = 1;
+      }
+    });
+  }
+
+  renderStripes(){
+    this.stripeContainer.replaceChildren();
+    const lines = this.patternInput.value.split("\n");
+
+    for(const line of lines){
+      const seq = this.parsePatternLine(line);
+      const stripeCanvas = this.renderStripeLine(seq);
+      if(!stripeCanvas) continue;
+
+      const wrapper = document.createElement("div");
+      wrapper.className="stripeWrapper";
+      wrapper.appendChild(stripeCanvas);
+      this.stripeContainer.appendChild(wrapper);
+    }
+  }
+
+  renderAll(){
+    this.renderPreviews();
+    this.renderStripes();
+  }
+}
+
+new PatternMaker({
+  designRow: document.getElementById("designRow"),
+  patternInput: document.getElementById("pattern"),
+  stripeContainer: document.getElementById("stripeContainer"),
+});
+</script>
+</body>
+</html>
