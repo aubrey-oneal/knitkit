@@ -1,0 +1,291 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Knitting Chart - Chevron SVG</title>
+<style>
+body { font-family: sans-serif; padding:20px; }
+/* Toggle pill styles */
+#viewToggleContainer { margin-bottom:15px; }
+#toggleLabel {
+  display:inline-flex; align-items:center; cursor:pointer; user-select:none;
+}
+#toggleText { margin-right:10px; font-weight:bold; }
+#togglePill {
+  width:50px; height:25px; border-radius:25px; background:#ccc; position:relative;
+  transition: background 0.3s;
+}
+#toggleHandle {
+  width:21px; height:21px; background:white; border-radius:50%;
+  position:absolute; top:2px; left:2px; transition:left 0.3s;
+}
+
+#grid {
+  display: grid;
+  grid-template-columns: repeat(6, 20px);
+  grid-template-rows: repeat(6, 20px);
+  width: 120px;
+  height: 120px;
+  margin-bottom: 10px;
+}
+.cell {
+  width: 20px;
+  height: 20px;
+  border: 1px solid #ccc;
+  box-sizing: border-box;
+  cursor: pointer;
+}
+svg { width: 100%; height: 100%; }
+#controls, #scaleControls { margin-bottom: 10px; }
+button { margin-right: 5px; margin-bottom: 5px; }
+#attributeDialog {
+  display: none;
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  background: #fff;
+  border: 1px solid #888;
+  padding: 20px;
+  z-index: 1000;
+}
+#attributeDialog label { display: block; margin: 5px 0; }
+#scaledGridContainer { margin-top: 10px; display: grid; }
+</style>
+</head>
+<body>
+
+<!-- Global Toggle Pill -->
+<div id="viewToggleContainer">
+  <label id="toggleLabel">
+    <span id="toggleText">Stitch</span>
+    <div id="togglePill">
+      <div id="toggleHandle"></div>
+    </div>
+  </label>
+</div>
+
+<div id="grid"></div>
+
+<div id="controls">
+  <button id="clearBtn">Clear</button>
+  <button id="saveBtn">Save</button>
+  <button id="openBtn">Open</button>
+  <input type="file" id="fileInput" accept=".json" style="display:none">
+</div>
+
+<div id="scaleControls">
+  <h3>Scale</h3>
+  <button class="scaleBtn" data-scale="2">2×</button>
+  <button class="scaleBtn" data-scale="3">3×</button>
+  <button class="scaleBtn" data-scale="4">4×</button>
+</div>
+
+<div id="attributeDialog">
+  <h3>Choose attributes</h3>
+  <label><input type="checkbox" value="geometric"> Geometric</label>
+  <label><input type="checkbox" value="floral"> Floral</label>
+  <label><input type="checkbox" value="abstract"> Abstract</label>
+  <label><input type="checkbox" value="modern"> Modern</label>
+  <div style="margin-top:10px;">
+    <button id="attrSaveBtn">Save</button>
+    <button id="attrCancelBtn">Cancel</button>
+  </div>
+</div>
+
+<div id="scaledGridContainer"></div>
+
+<script>
+const GRID_SIZE = 6;
+const cells = [];
+let chevronView = true;
+let currentScale = 2;
+
+const gridContainer = document.getElementById('grid');
+
+function createSVGCell(isBlack, viewChevron) {
+  if (!viewChevron) {
+    const div = document.createElement('div');
+    div.style.width = '100%';
+    div.style.height = '100%';
+    div.style.backgroundColor = isBlack ? 'black' : 'white';
+    return div;
+  }
+  const svgNS = "http://www.w3.org/2000/svg";
+  const svg = document.createElementNS(svgNS, "svg");
+  svg.setAttribute("viewBox", "0 0 16 16");
+  svg.setAttribute("width", "100%");
+  svg.setAttribute("height", "100%");
+
+  const bg = document.createElementNS(svgNS, "rect");
+  bg.setAttribute("width","16");
+  bg.setAttribute("height","16");
+  bg.setAttribute("fill","white");
+  svg.appendChild(bg);
+
+  const left = document.createElementNS(svgNS,"path");
+  left.setAttribute("d","M1 1L7.6 5.5V15L1 10.5V1Z");
+  left.setAttribute("fill", isBlack ? "black":"white");
+  svg.appendChild(left);
+
+  const right = document.createElementNS(svgNS,"path");
+  right.setAttribute("d","M14.8929 1L8.39286 5.5V15L14.8929 10.5V1Z");
+  right.setAttribute("fill", isBlack ? "black":"white");
+  svg.appendChild(right);
+
+  return svg;
+}
+
+// Build main grid
+for (let i = 0; i < GRID_SIZE * GRID_SIZE; i++) {
+  const cell = document.createElement('div');
+  cell.classList.add('cell');
+  cell.dataset.state = '0';
+  cell.appendChild(createSVGCell(false, chevronView));
+
+  cell.addEventListener('click', () => {
+    cell.dataset.state = cell.dataset.state === '0' ? '1' : '0';
+    cell.replaceChild(createSVGCell(cell.dataset.state==='1', chevronView), cell.firstChild);
+    updateScaledPreview();
+  });
+
+  gridContainer.appendChild(cell);
+  cells.push(cell);
+}
+
+// Toggle pill
+const togglePill = document.getElementById('togglePill');
+const toggleHandle = document.getElementById('toggleHandle');
+const toggleText = document.getElementById('toggleText');
+
+togglePill.addEventListener('click', () => {
+  chevronView = !chevronView;
+  if(chevronView){
+    togglePill.style.background = '#0f62fe';
+    toggleHandle.style.left = '27px';
+    toggleText.textContent = 'Stitch';
+  } else {
+    togglePill.style.background = '#ccc';
+    toggleHandle.style.left = '2px';
+    toggleText.textContent = 'Grid';
+  }
+  cells.forEach(cell => {
+    cell.replaceChild(createSVGCell(cell.dataset.state==='1', chevronView), cell.firstChild);
+  });
+  updateScaledPreview();
+});
+
+// Clear
+document.getElementById('clearBtn').addEventListener('click', () => {
+  cells.forEach(cell => {
+    cell.dataset.state = '0';
+    cell.replaceChild(createSVGCell(false, chevronView), cell.firstChild);
+  });
+  updateScaledPreview();
+});
+
+// Save/Open
+const fileInput = document.getElementById('fileInput');
+document.getElementById('openBtn').addEventListener('click', () => fileInput.click());
+fileInput.addEventListener('change', () => {
+  const file = fileInput.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = e => {
+    try {
+      const data = JSON.parse(e.target.result);
+      const gridData = data.grid;
+      for (let r = 0; r < GRID_SIZE; r++) {
+        for (let c = 0; c < GRID_SIZE; c++) {
+          const cell = cells[r * GRID_SIZE + c];
+          cell.dataset.state = gridData[r][c] ? '1' : '0';
+          cell.replaceChild(createSVGCell(cell.dataset.state==='1', chevronView), cell.firstChild);
+        }
+      }
+      updateScaledPreview();
+      alert(data.name + (data.attributes ? "\nAttributes: " + data.attributes.join(', ') : ""));
+    } catch(err) { alert('Invalid file'); }
+  };
+  reader.readAsText(file);
+});
+
+const saveBtn = document.getElementById('saveBtn');
+const attributeDialog = document.getElementById('attributeDialog');
+const attrSaveBtn = document.getElementById('attrSaveBtn');
+const attrCancelBtn = document.getElementById('attrCancelBtn');
+let currentName = '';
+
+saveBtn.addEventListener('click', () => {
+  const name = prompt('Enter a name for your design:');
+  if (!name) return;
+  currentName = name;
+  attributeDialog.style.display = 'block';
+});
+attrCancelBtn.addEventListener('click', () => {
+  attributeDialog.style.display = 'none';
+  attributeDialog.querySelectorAll('input[type=checkbox]').forEach(cb => cb.checked = false);
+});
+attrSaveBtn.addEventListener('click', () => {
+  const checked = Array.from(attributeDialog.querySelectorAll('input[type=checkbox]:checked')).map(cb => cb.value);
+  const gridData = [];
+  for (let r = 0; r < GRID_SIZE; r++) {
+    const row = [];
+    for (let c = 0; c < GRID_SIZE; c++) {
+      row.push(cells[r * GRID_SIZE + c].dataset.state === '1' ? 1 : 0);
+    }
+    gridData.push(row);
+  }
+  const blob = new Blob([JSON.stringify({name: currentName, grid: gridData, attributes: checked}, null, 2)],
+                        {type: 'application/json'});
+  const link = document.createElement('a');
+  link.href = URL.createObjectURL(blob);
+  link.download = `${currentName}.json`;
+  link.click();
+  attributeDialog.style.display = 'none';
+  attributeDialog.querySelectorAll('input[type=checkbox]').forEach(cb => cb.checked = false);
+});
+
+// Scale preview
+document.querySelectorAll('.scaleBtn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('.scaleBtn').forEach(b=>b.classList.remove('active'));
+    btn.classList.add('active');
+    currentScale = parseInt(btn.getAttribute('data-scale'));
+    updateScaledPreview();
+  });
+});
+
+function updateScaledPreview() {
+  const container = document.getElementById('scaledGridContainer');
+  container.innerHTML = '';
+  container.style.width = `${GRID_SIZE * currentScale * 20}px`;
+  container.style.height = `${GRID_SIZE * currentScale * 20}px`;
+  container.style.position = 'relative';
+
+  for (let r = 0; r < GRID_SIZE; r++) {
+    for (let c = 0; c < GRID_SIZE; c++) {
+      const state = cells[r * GRID_SIZE + c].dataset.state;
+      for (let dr = 0; dr < currentScale; dr++) {
+        for (let dc = 0; dc < currentScale; dc++) {
+          const wrapper = document.createElement('div');
+          wrapper.style.width = '20px';
+          wrapper.style.height = '20px';
+          wrapper.style.position = 'absolute';
+          wrapper.style.left = `${(c*currentScale + dc)*20}px`;
+          wrapper.style.top = `${(r*currentScale + dr)*20}px`;
+          wrapper.style.boxSizing = 'border-box';
+          wrapper.style.border = '1px solid #ccc'; // subtle grid
+          
+          const pixel = createSVGCell(state==='1', chevronView);
+          pixel.style.width = '100%';
+          pixel.style.height = '100%';
+          wrapper.appendChild(pixel);
+          container.appendChild(wrapper);
+        }
+      }
+    }
+  }
+}
+</script>
+</body>
+</html>

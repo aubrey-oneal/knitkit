@@ -1,0 +1,248 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>Multi-Design Stripe Repeater — Centered Panels</title>
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<style>
+body { font-family: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial; padding:20px; display:flex; flex-direction:column; gap:20px; }
+.design-col { display:inline-block; width:340px; min-width:260px; vertical-align:top; margin-right:20px; }
+h2 { margin:4px 0 8px; font-size:16px; }
+label.block { display:block; margin-top:8px; font-size:13px; color:#333; }
+input[type="text"], input[type="file"], textarea { width:100%; box-sizing:border-box; padding:6px; font-size:14px; }
+input[type="range"] { width:100%; }
+canvas { display:block; background:#fff; border:1px solid #bbb; margin-top:8px; image-rendering: pixelated; }
+.small { font-size:13px; color:#444; margin-top:6px; }
+#stripeContainer { width:100%; display:flex; flex-direction:column; gap:12px; }
+.stripeWrapper { width:100%; overflow-x:auto; border:1px solid #ddd; padding:8px; box-sizing:border-box; background:#fff; }
+</style>
+</head>
+<body>
+
+<div style="display:flex; gap:20px; flex-wrap:wrap;">
+  <!-- Design A -->
+  <div class="design-col">
+    <h2>Design A</h2>
+    <input id="fileA" type="file" accept=".json" />
+    <canvas id="canvasA" width="1" height="1"></canvas>
+    <label class="block">scale
+      <input id="scaleA" type="range" min="1" max="20" value="1">
+      <div class="small"><span id="scaleALabel">1×</span></div>
+    </label>
+  </div>
+
+  <!-- Design B -->
+  <div class="design-col">
+    <h2>Design B</h2>
+    <input id="fileB" type="file" accept=".json" />
+    <canvas id="canvasB" width="1" height="1"></canvas>
+    <label class="block">scale
+      <input id="scaleB" type="range" min="1" max="20" value="1">
+      <div class="small"><span id="scaleBLabel">1×</span></div>
+    </label>
+  </div>
+
+  <!-- Design C -->
+  <div class="design-col">
+    <h2>Design C</h2>
+    <input id="fileC" type="file" accept=".json" />
+    <canvas id="canvasC" width="1" height="1"></canvas>
+    <label class="block">scale
+      <input id="scaleC" type="range" min="1" max="20" value="1">
+      <div class="small"><span id="scaleCLabel">1×</span></div>
+    </label>
+  </div>
+</div>
+
+<div>
+  <h2>Stripe Repeater (multiple lines for multiple stripes)</h2>
+  <label class="block">Pseudocode sequence — e.g., <code>3(A2B3)</code> or <code>A2B3</code> or multiple lines:
+    <div class="small">Global repeat outside parentheses; A#/B#/C# = token counts; enter multiple lines for multiple stripes</div>
+  </label>
+  <textarea id="pattern" rows="4" style="width:100%; font-family:monospace;"></textarea>
+  <div id="stripeContainer"></div>
+</div>
+
+<script>
+const files = {A:null, B:null, C:null};
+const scales = {A:1, B:1, C:1};
+const canvases = {A: document.getElementById('canvasA'), B: document.getElementById('canvasB'), C: document.getElementById('canvasC')};
+const scaleInputs = {A: document.getElementById('scaleA'), B: document.getElementById('scaleB'), C: document.getElementById('scaleC')};
+const scaleLabels = {A: document.getElementById('scaleALabel'), B: document.getElementById('scaleBLabel'), C: document.getElementById('scaleCLabel')};
+const patternInput = document.getElementById('pattern');
+const stripeContainer = document.getElementById('stripeContainer');
+
+function toColorGrid(grid){
+  return grid.map(row=>row.map(cell=>{
+    if(cell===1||cell==='1'||cell===true) return 'black';
+    if(cell===0||cell==='0'||cell===false) return 'white';
+    if(typeof cell==='string'){
+      const s=cell.trim().toLowerCase();
+      if(['0','white','#fff','#ffffff'].includes(s)) return 'white';
+      if(['1','black','#000','#000000'].includes(s)) return 'black';
+    }
+    return 'white';
+  }));
+}
+
+function readJsonFile(file, cb){
+  const fr = new FileReader();
+  fr.onload = ()=>{
+    try{
+      const parsed = JSON.parse(fr.result);
+      if(Array.isArray(parsed)&&Array.isArray(parsed[0])) cb(toColorGrid(parsed));
+      else if(parsed && Array.isArray(parsed.grid)) cb(toColorGrid(parsed.grid));
+      else alert("Invalid JSON — expected 2D array or object with 'grid'.");
+    }catch(err){alert("Failed to parse JSON: "+err.message);}
+  };
+  fr.readAsText(file);
+}
+
+function expandDesign(design, scale){
+  if(scale===1) return design;
+  const expanded=[];
+  for(const row of design){
+    const newRow=row.flatMap(cell=>Array(scale).fill(cell));
+    for(let i=0;i<scale;i++) expanded.push([...newRow]);
+  }
+  return expanded;
+}
+
+function drawGridOnCanvas(grid, canvas){
+  if(!grid || !grid.length || !grid[0].length){canvas.width=1; canvas.height=1; return;}
+  const ctx = canvas.getContext('2d');
+  const h=grid.length, w=grid[0].length;
+  canvas.width=w*10;
+  canvas.height=h*10;
+  ctx.clearRect(0,0,canvas.width,canvas.height);
+  for(let y=0;y<h;y++){
+    for(let x=0;x<w;x++){
+      ctx.fillStyle = grid[y][x];
+      ctx.fillRect(x*10,y*10,10,10);
+    }
+  }
+  ctx.strokeStyle='#ccc'; ctx.lineWidth=1;
+  for(let x=0;x<=w;x++){const px=x*10+0.5; ctx.beginPath(); ctx.moveTo(px,0); ctx.lineTo(px,h*10); ctx.stroke();}
+  for(let y=0;y<=h;y++){const py=y*10+0.5; ctx.beginPath(); ctx.moveTo(0,py); ctx.lineTo(w*10,py); ctx.stroke();}
+}
+
+function drawPreviews(){
+  for(const key of ['A','B','C']){
+    scaleLabels[key].textContent = scales[key]+'×';
+    if(files[key]) drawGridOnCanvas(expandDesign(files[key], scales[key]), canvases[key]);
+  }
+}
+
+function expandTokens(seqText){
+  const out=[];
+  const cleaned = seqText.replace(/\s+/g,'').toUpperCase();
+  let i=0;
+  while(i<cleaned.length){
+    const letter = cleaned[i];
+    if(!['A','B','C'].includes(letter)){i++; continue;}
+    i++;
+    let numStr='';
+    while(i<cleaned.length && /\d/.test(cleaned[i])){ numStr+=cleaned[i]; i++; }
+    const count = numStr?parseInt(numStr,10):1;
+    for(let c=0;c<count;c++) out.push(letter);
+  }
+  return out;
+}
+
+function parsePatternLine(line){
+  line = line.trim();
+  const globalMatch=line.match(/^(\d+)\((.+)\)$/i);
+  if(globalMatch){
+    const repeat=parseInt(globalMatch[1],10)||1;
+    const inside = globalMatch[2];
+    const tokens = expandTokens(inside);
+    return Array(repeat).fill(tokens).flat();
+  }
+  return expandTokens(line);
+}
+
+function renderStripeLine(seq){
+  const panels=[];
+  for(const t of seq){
+    if(files[t]){
+      const grid = expandDesign(files[t], scales[t]);
+      panels.push({grid});
+    }
+  }
+  if(!panels.length) return null;
+
+  const maxHeight = Math.max(...panels.map(p=>p.grid.length));
+  const maxWidth = Math.max(...panels.map(p=>p.grid[0].length));
+
+  const totalWidth = panels.reduce((sum,p)=>sum+maxWidth,0);
+  const canvas = document.createElement('canvas');
+  canvas.width = totalWidth*10;
+  canvas.height = maxHeight*10;
+  const ctx = canvas.getContext('2d');
+  ctx.clearRect(0,0,canvas.width,canvas.height);
+
+  let cumulativeX = 0;
+  for(const p of panels){
+    const w = p.grid[0].length, h = p.grid.length;
+    const padX = Math.floor((maxWidth - w)/2);
+    const padTop = Math.floor((maxHeight - h)/2);
+
+    for(let y=0;y<h;y++){
+      for(let x=0;x<w;x++){
+        ctx.fillStyle = p.grid[y][x];
+        ctx.fillRect((cumulativeX+padX+x)*10, (padTop+y)*10,10,10);
+      }
+    }
+
+    // grid for entire allocated panel
+    ctx.strokeStyle='#ccc'; ctx.lineWidth=1;
+    for(let xi=0;xi<=maxWidth;xi++){
+      const px=(cumulativeX+xi)*10+0.5;
+      ctx.beginPath(); ctx.moveTo(px,0); ctx.lineTo(px,maxHeight*10); ctx.stroke();
+    }
+    for(let yi=0;yi<=maxHeight;yi++){
+      const py=yi*10+0.5;
+      ctx.beginPath(); ctx.moveTo(cumulativeX*10,py); ctx.lineTo((cumulativeX+maxWidth)*10,py); ctx.stroke();
+    }
+
+    cumulativeX += maxWidth;
+  }
+
+  return canvas;
+}
+
+function renderAllStripes(){
+  stripeContainer.innerHTML='';
+  const lines = patternInput.value.split('\n');
+  for(const line of lines){
+    const seq = parsePatternLine(line);
+    const canvas = renderStripeLine(seq);
+    if(canvas){
+      const wrapper = document.createElement('div');
+      wrapper.className = 'stripeWrapper';
+      wrapper.appendChild(canvas);
+      stripeContainer.appendChild(wrapper);
+    }
+  }
+}
+
+function renderAll(){ drawPreviews(); renderAllStripes(); }
+
+for(const key of ['A','B','C']){
+  document.getElementById('file'+key).addEventListener('change', e=>{
+    const f=e.target.files[0];
+    if(f) readJsonFile(f,g=>{files[key]=g; renderAll();});
+  });
+  scaleInputs[key].addEventListener('input', e=>{
+    scales[key]=parseInt(scaleInputs[key].value,10);
+    renderAll();
+  });
+}
+
+patternInput.addEventListener('input', renderAll);
+patternInput.addEventListener('keydown', e=>{ if(e.key==='Enter'){ renderAll(); } });
+
+renderAll();
+</script>
+</body>
+</html>
